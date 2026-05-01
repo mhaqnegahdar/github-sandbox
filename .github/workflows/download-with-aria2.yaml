@@ -35,19 +35,41 @@ jobs:
 
           echo "Mode: $MODE"
           mkdir -p downloads tmp_downloads
+        
+          # Split entries by |
+          IFS='|' read -ra ENTRIES <<< "$URL_LINE" 
 
-          for URL in $URL_LINE; do
-            FILENAME=$(basename "$URL")
+            for ENTRY in "${ENTRIES[@]}"; do
+            ENTRY=$(echo "$ENTRY" | xargs)  # trim spaces
+
+            # Check if custom name provided
+            if [[ "$ENTRY" == *"::"* ]]; then
+                URL="${ENTRY%%::*}"
+                CUSTOM_NAME="${ENTRY##*::}"
+                CUSTOM_NAME=$(echo "$CUSTOM_NAME" | xargs)
+            else
+                URL="$ENTRY"
+                CUSTOM_NAME=""
+            fi
+
+            # Determine filename
+            if [ -n "$CUSTOM_NAME" ]; then
+                FILENAME="$CUSTOM_NAME"
+            else
+                FILENAME=$(basename "$URL")
+            fi
+
             echo "⬇️ Downloading $URL -> $FILENAME"
 
             aria2c \
-              --split=2 \
-              --max-connection-per-server=2 \
-              --min-split-size=90M \
-              --out="$FILENAME" \
-              --dir="tmp_downloads" \
-              "$URL"
-          done
+                --split=2 \
+                --max-connection-per-server=2 \
+                --min-split-size=90M \
+                --out="$FILENAME" \
+                --dir="tmp_downloads" \
+                "$URL"
+            done
+
 
           if [ "$MODE" = "zip" ]; then
             ARCHIVE_NAME="tmp_downloads/archive_$(date +%Y%m%d_%H%M%S).zip"
