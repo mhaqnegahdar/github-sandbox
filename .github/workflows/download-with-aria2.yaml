@@ -13,15 +13,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Install aria2
         run: sudo apt-get install -y aria2
-
       - name: Extract URLs and download files
         run: |
           MSG=$(git log -1 --pretty=%B)
           echo "Commit message: $MSG"
-
           if echo "$MSG" | grep -qP 'download-zip:'; then
             MODE="zip"
             URL_LINE=$(echo "$MSG" | grep -oP 'download-zip:\s*\K.*')
@@ -32,70 +29,56 @@ jobs:
             echo "❌ No download command found in commit message"
             exit 1
           fi
-
           echo "Mode: $MODE"
           mkdir -p downloads tmp_downloads
-        
-          # Split entries by |
-          IFS='|' read -ra ENTRIES <<< "$URL_LINE" 
 
-            for ENTRY in "${ENTRIES[@]}"; do
-            ENTRY=$(echo "$ENTRY" | xargs)  # trim spaces
+          # Split entries by pipe character
+          IFS='|' read -ra ENTRIES <<< "$URL_LINE"
 
-            # Check if custom name provided
-            if [[ "$ENTRY" == *"::"* ]]; then
-                URL="${ENTRY%%::*}"
-                CUSTOM_NAME="${ENTRY##*::}"
-                CUSTOM_NAME=$(echo "$CUSTOM_NAME" | xargs)
+          for ENTRY in "${ENTRIES[@]}"; do
+            # Trim leading/trailing whitespace
+            ENTRY=$(echo "$ENTRY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [ -z "$ENTRY" ] && continue
+
+            # Check if a custom name is provided via Name[...] syntax
+            if echo "$ENTRY" | grep -qP 'Name\[.+\]'; then
+              URL=$(echo "$ENTRY" | sed 's/[[:space:]]*Name\[.*\]//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+              FILENAME=$(echo "$ENTRY" | grep -oP 'Name\[\K[^\]]+')
             else
-                URL="$ENTRY"
-                CUSTOM_NAME=""
-            fi
-
-            # Determine filename
-            if [ -n "$CUSTOM_NAME" ]; then
-                FILENAME="$CUSTOM_NAME"
-            else
-                FILENAME=$(basename "$URL")
+              URL=$(echo "$ENTRY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+              FILENAME=$(basename "$URL")
             fi
 
             echo "⬇️ Downloading $URL -> $FILENAME"
-
             aria2c \
-                --split=2 \
-                --max-connection-per-server=2 \
-                --min-split-size=90M \
-                --out="$FILENAME" \
-                --dir="tmp_downloads" \
-                "$URL"
-            done
-
+              --split=2 \
+              --max-connection-per-server=2 \
+              --min-split-size=90M \
+              --out="$FILENAME" \
+              --dir="tmp_downloads" \
+              "$URL"
+          done
 
           if [ "$MODE" = "zip" ]; then
             ARCHIVE_NAME="tmp_downloads/archive_$(date +%Y%m%d_%H%M%S).zip"
             zip -j "$ARCHIVE_NAME" tmp_downloads/*
           fi
 
-          # Split any zip over 90MB using zip native split (unzip compatible)
+          # Split any file over 90MB using zip native split (unzip compatible)
           for FILE in tmp_downloads/*; do
             [ -f "$FILE" ] || continue
             SIZE=$(stat -c%s "$FILE")
             LIMIT=$((90 * 1024 * 1024))
             BASENAME=$(basename "$FILE")
-
             if [ "$SIZE" -gt "$LIMIT" ]; then
               echo "✂️ $BASENAME is $(( SIZE / 1024 / 1024 ))MB — splitting with zip..."
-              # zip -s creates: file.zip, file.z01, file.z02, ...
-              #zip -s 90m "downloads/${BASENAME}.zip" --out "downloads/${BASENAME}.zip" "$FILE"
               zip -s 90m "downloads/${BASENAME}.zip" -j "$FILE"
               echo "✅ Parts: $(ls downloads/${BASENAME}* | wc -l)"
             else
               cp "$FILE" "downloads/$BASENAME"
             fi
           done
-
           rm -rf tmp_downloads
-
       - name: Commit & Push
         run: |
           BRANCH="${GITHUB_REF_NAME}"
